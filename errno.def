@@ -1,0 +1,2 @@
+headers = errno.h stdio.h 
+

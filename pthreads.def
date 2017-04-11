@@ -1,0 +1,4 @@
+headers = pthread.h
+compilerOpts = -D_POSIX_SOURCE
+linkerOpts = -lpthread
+compilerOpts.linux = -D_REENTRANT -I/usr/include

@@ -1,0 +1,49 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        maven {
+            url  "https://dl.bintray.com/jetbrains/kotlin-native-dependencies"
+        }
+    }
+
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-native-gradle-plugin:0.1"
+    }
+}
+
+apply plugin: 'konan'
+
+konanInterop {
+    pthreads {
+        defFile "pthreads.def"
+    }
+    errno {
+        defFile "errno.def"
+    }
+    time {
+    	defFile "time.def"
+    }
+    epoll {
+        defFile "epoll.def"
+    }
+}
+
+konanArtifacts {
+    Test {
+        inputFiles project.fileTree('src')
+        
+        useInterop "pthreads"
+        useInterop "errno"
+        useInterop "time"
+        useInterop "epoll"
+    }
+}
+
+build {
+    doLast {
+        copy {
+            from compileKonanTest.artifactPath
+            into projectDir.canonicalPath
+        }
+    }
+}
