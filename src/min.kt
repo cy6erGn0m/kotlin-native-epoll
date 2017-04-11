@@ -66,14 +66,19 @@ class EPollSelector {
 
     fun interest(fd: Int, interest: Int): SelectionKey {
         var add = false
-        val sk = keys[fd] ?: run { add = true; SelectionKeyImpl(fd).apply { keys[fd] = this } } 
+        val sk = keys[fd] ?: run { add = true; SelectionKeyImpl(fd) } 
 
-        sk.interestOps = interest
         sk.readyOps = 0
 
         buffer[0].events = interest
         buffer[0].data.fd = fd
         epoll_ctl(epfd, if (add) EPOLL_CTL_ADD else EPOLL_CTL_MOD, fd, buffer[0].ptr).ensureUnixCallResult("epoll_ctl") { it == 0 }
+
+        sk.interestOps = interest
+
+        if (add) {
+            keys[fd] = sk
+        }
 
         return sk
     }
@@ -82,6 +87,8 @@ class EPollSelector {
         val sk = keys.remove(fd) ?: return
         sk.interestOps = 0
         sk.readyOps = 0
+
+        _selected.remove(sk)
 
         buffer[0].events = 0
         buffer[0].data.fd = fd
@@ -120,6 +127,9 @@ class EPollSelector {
         }
 
         wakeup.close()
+
+        keys.clear()
+        _selected.clear()
     }
 }
 
