@@ -2,8 +2,16 @@ import epoll.*
 import errno.*
 import kotlinx.cinterop.*
 
-class SelectionKey(val fd: Int) {
-    var readyOps = 0
+
+interface SelectionKey {
+    val fd: Int
+    val interestOps: Int
+    val readyOps: Int
+}
+
+private class SelectionKeyImpl(override val fd: Int) : SelectionKey {
+    override var interestOps = 0
+    override var readyOps = 0
 }
 
 class EventFd(val flags: Int = EFD_NONBLOCK) {
@@ -38,8 +46,8 @@ class EPollSelector {
     private val wakeup = EventFd()
     private val buffer = nativeHeap.allocArray<epoll_event>(8192)
 
-    private val keys = mutableMapOf<Int, SelectionKey>()
-    private val _selected = mutableSetOf<SelectionKey>()
+    private val keys = mutableMapOf<Int, SelectionKeyImpl>()
+    private val _selected = mutableSetOf<SelectionKeyImpl>()
 
     val selected: Set<SelectionKey>
         get() = _selected
@@ -56,13 +64,28 @@ class EPollSelector {
         wakeup.signal()
     }
 
-    fun register(fd: Int, interest: Int) {
-        val sk = keys.getOrPut(fd) { SelectionKey(fd) }
+    fun interest(fd: Int, interest: Int): SelectionKey {
+        var add = false
+        val sk = keys[fd] ?: run { add = true; SelectionKeyImpl(fd).apply { keys[fd] = this } } 
+
+        sk.interestOps = interest
         sk.readyOps = 0
 
         buffer[0].events = interest
         buffer[0].data.fd = fd
-        epoll_ctl(epfd, EPOLL_CTL_ADD, fd, buffer[0].ptr).ensureUnixCallResult("epoll_ctl") { it == 0 }
+        epoll_ctl(epfd, if (add) EPOLL_CTL_ADD else EPOLL_CTL_MOD, fd, buffer[0].ptr).ensureUnixCallResult("epoll_ctl") { it == 0 }
+
+        return sk
+    }
+
+    fun cancel(fd: Int) {
+        val sk = keys.remove(fd) ?: return
+        sk.interestOps = 0
+        sk.readyOps = 0
+
+        buffer[0].events = 0
+        buffer[0].data.fd = fd
+        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, buffer[0].ptr).ensureUnixCallResult("epoll_ctl") { it == 0 }
     }
 
     fun wait(timeoutMillis: Int): Int {
@@ -119,7 +142,7 @@ fun main(args: Array<String>) {
 
     try {
         selector.start()
-        selector.register(socket, POLLIN)
+        selector.interest(socket, POLLIN)
         
         while (true) {
             if (selector.wait(9000) > 0) {
@@ -132,6 +155,8 @@ fun main(args: Array<String>) {
                 break
             }
         }
+
+        selector.cancel(socket)
     } finally {
         close(socket)
         selector.close()
