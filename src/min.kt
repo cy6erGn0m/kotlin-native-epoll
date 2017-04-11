@@ -6,10 +6,38 @@ class SelectionKey(val fd: Int) {
     var readyOps = 0
 }
 
+class EventFd(val flags: Int = EFD_NONBLOCK) {
+    val fd = eventfd(0, flags).ensureUnixCallResult("eventfd()") { it >= 0 }
+    private val buffer = nativeHeap.allocArray<LongVar>(2)
+    private var released = false
+
+    fun signal() {
+        if (released) throw IllegalStateException("already released")
+
+        buffer[0] = 1L
+        write(fd, buffer, 8).ensureUnixCallResult("write(eventfd)") { it == 8L }
+    }
+
+    fun get(): Boolean {
+        buffer[1] = 0L
+        read(fd, buffer + 1, 8).ensureUnixCallResult("read(eventfd)") { it == 8L }
+        return buffer[1] > 0L
+    }
+
+    fun close() {
+        if (!released) {
+            released = true
+            close(fd)
+            nativeHeap.free(buffer)
+        }
+    }
+}
+
 class EPollSelector {
     private var epfd: Int = -1
-    private var wakeupFd: Int = -1
+    private val wakeup = EventFd()
     private val buffer = nativeHeap.allocArray<epoll_event>(8192)
+
     private val keys = mutableMapOf<Int, SelectionKey>()
     private val _selected = mutableSetOf<SelectionKey>()
 
@@ -18,19 +46,14 @@ class EPollSelector {
 
     fun start() {
         epfd = epoll_create(8192).ensureUnixCallResult("epoll_create") { it != -1 }
-        wakeupFd = eventfd(0, EFD_NONBLOCK).ensureUnixCallResult("eventfd") { it >= 0 }
 
         buffer[0].events = POLLIN
-        buffer[0].data.fd = wakeupFd
-        epoll_ctl(epfd, EPOLL_CTL_ADD, wakeupFd, buffer[0].ptr).ensureUnixCallResult("epoll_ctl(eventfd)") { it == 0 }
+        buffer[0].data.fd = wakeup.fd
+        epoll_ctl(epfd, EPOLL_CTL_ADD, wakeup.fd, buffer[0].ptr).ensureUnixCallResult("epoll_ctl(eventfd)") { it == 0 }
     }
 
     fun wakeup() {
-        memScoped {
-            val i = alloc<LongVar>()
-            i.value = 1
-            write(wakeupFd, i.ptr, 8).ensureUnixCallResult("write(eventfd)") { it == 8L }
-        }
+        wakeup.signal()
     }
 
     fun register(fd: Int, interest: Int) {
@@ -53,11 +76,8 @@ class EPollSelector {
             if (key != null) {
                 key.readyOps = key.readyOps or ev.events
                 _selected.add(key)
-            } else if (ev.data.fd == wakeupFd) {
-                memScoped {
-                    val b = alloc<LongVar>()
-                    read(wakeupFd, b.ptr, 8)
-                }
+            } else if (ev.data.fd == wakeup.fd) {
+                wakeup.get()
             } else {
                 println("No key found for fd ${ev.data.fd}")
             }
@@ -76,10 +96,7 @@ class EPollSelector {
             epfd = -1
         }
 
-        if (wakeupFd != -1) {
-            close(wakeupFd)
-            wakeupFd = -1
-        }
+        wakeup.close()
     }
 }
 
