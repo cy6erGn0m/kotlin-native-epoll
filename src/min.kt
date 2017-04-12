@@ -7,11 +7,13 @@ interface SelectionKey {
     val fd: Int
     val interestOps: Int
     val readyOps: Int
+    var attachment: Any?
 }
 
 private class SelectionKeyImpl(override val fd: Int) : SelectionKey {
     override var interestOps = 0
     override var readyOps = 0
+    override var attachment: Any? = null
 }
 
 class EventFd(val flags: Int = EFD_NONBLOCK) {
@@ -133,6 +135,19 @@ class EPollSelector {
     }
 }
 
+class Client(val fd: Int, val selector: EPollSelector) {
+    val buffer = nativeHeap.allocArray<ByteVar>(8192)
+    var index = 0L
+    var size = 0L
+
+    fun close() {
+        size = 0L
+        nativeHeap.free(buffer)
+        selector.cancel(fd)
+        close(fd)
+    }
+}
+
 fun main(args: Array<String>) {
     val port: Short = 9094
     val selector = EPollSelector()
@@ -155,38 +170,72 @@ fun main(args: Array<String>) {
         selector.interest(socket, POLLIN)
         
         while (true) {
-            if (selector.wait(9000) > 0) {
-                val client = accept(socket, null, null).ensureUnixCallResult("accept") { it >= 0 }
-
-                println("Got client")
-                close(client)
+            if (selector.wait(Int.MAX_VALUE) > 0) {
+                for (k in selector.selected) {
+                    if (k.attachment == null) {
+                        val client = accept(socket, null, null).ensureUnixCallResult("accept") { it >= 0 }
+                        val flag = fcntl(client, F_GETFL, 0).ensureUnixCallResult("fcntl(GETFL)") { it >= 0 }
+                        fcntl(client, F_SETFL, flag or O_NONBLOCK)
+                        val sk = selector.interest(client, POLLIN)
+                        sk.attachment = Client(client, selector)
+                    } else if (k.attachment is Client) {
+                        val client = k.attachment as Client
+                        
+                        if (k.readyOps and POLLIN != 0) {
+                            val rc = read(k.fd, client.buffer, 8192)
+                            
+                            if (rc == 0L) {
+                                client.close()
+                            } else if (rc > 0L) {
+                                client.index = 0
+                                client.size = rc
+                                selector.interest(k.fd, POLLOUT)
+                            } else if (rc == -1L) {
+                                @Suppress("DUPLICATE_LABEL_IN_WHEN")
+                                when (errno()) {
+                                    EAGAIN, EWOULDBLOCK -> {}
+                                    else -> {
+                                        client.close()
+                                    }
+                                }
+                            }
+                        } else if (k.readyOps and POLLOUT != 0) {
+                            val rc = write(k.fd, client.buffer + client.index, client.size)
+                            if (rc == -1L) {
+                                client.close()
+                            } else {
+                                client.index += rc
+                                client.size -= rc
+                                if (client.size == 0L) {
+                                    selector.interest(k.fd, POLLIN)
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 println("timeout")
-                break
             }
         }
-
-        selector.cancel(socket)
     } finally {
         close(socket)
         selector.close()
     }
 }
 
-fun throwUnixError(name: String?): Nothing {
+fun errno(): Int {
     val errnoAddress = __errno_location()
-    if (errnoAddress != null) {
+    return if (errnoAddress != null) errnoAddress.pointed.value else 0
+}
+
+fun throwUnixError(name: String?): Nothing {
         val errorString = memScoped {
             val errorBuffer = allocArray<ByteVar>(8192)
-            strerror_r(errnoAddress.pointed.value, errorBuffer, 8192)
+            strerror_r(errno(), errorBuffer, 8192)
             errorBuffer.toKString()
         }
 
         throw Error("UNIX call ${name ?: ""} failed: $errorString")
-    }
-
-    perror(null)
-    throw Error("UNIX call failed")
 }
 
 inline fun Int.ensureUnixCallResult(name: String? = null, predicate: (Int) -> Boolean): Int {
