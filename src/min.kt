@@ -148,6 +148,61 @@ class Client(val fd: Int, val selector: EPollSelector) {
     }
 }
 
+fun handleAccept(socket: Int, selector: EPollSelector) {
+    val client = accept(socket, null, null).ensureUnixCallResult("accept") { it >= 0 }
+    val flag = fcntl(client, F_GETFL, 0).ensureUnixCallResult("fcntl(GETFL)") { it >= 0 }
+    fcntl(client, F_SETFL, flag or O_NONBLOCK)
+    val sk = selector.interest(client, POLLIN)
+    sk.attachment = Client(client, selector)
+}
+
+fun handleSelected(client: Client, k: SelectionKey, selector: EPollSelector) {
+    if (k.readyOps and POLLIN != 0) {
+        val rc = read(k.fd, client.buffer, 8192)
+        
+        if (rc == 0L) {
+            client.close()
+        } else if (rc > 0L) {
+            client.index = 0
+            client.size = rc
+            selector.interest(k.fd, POLLOUT)
+        } else if (rc == -1L) {
+            @Suppress("DUPLICATE_LABEL_IN_WHEN")
+            when (errno()) {
+                EAGAIN, EWOULDBLOCK -> {}
+                else -> {
+                    client.close()
+                }
+            }
+        }
+    } else if (k.readyOps and POLLOUT != 0) {
+        val rc = write(k.fd, client.buffer + client.index, client.size)
+        if (rc == -1L) {
+            client.close()
+        } else {
+            client.index += rc
+            client.size -= rc
+            if (client.size == 0L) {
+                selector.interest(k.fd, POLLIN)
+            }
+        }
+    }
+}
+
+tailrec fun selectLoop(selector: EPollSelector) {
+    if (selector.wait(Int.MAX_VALUE) > 0) {
+        for (k in selector.selected) {
+            val client = k.attachment as? Client
+            if (client == null) {
+                handleAccept(k.fd, selector)
+            } else {
+                handleSelected(client, k, selector)
+            }
+        }
+    } 
+    selectLoop(selector)
+}
+
 fun main(args: Array<String>) {
     val port: Short = 9094
     val selector = EPollSelector()
@@ -169,54 +224,7 @@ fun main(args: Array<String>) {
         selector.start()
         selector.interest(socket, POLLIN)
         
-        while (true) {
-            if (selector.wait(Int.MAX_VALUE) > 0) {
-                for (k in selector.selected) {
-                    if (k.attachment == null) {
-                        val client = accept(socket, null, null).ensureUnixCallResult("accept") { it >= 0 }
-                        val flag = fcntl(client, F_GETFL, 0).ensureUnixCallResult("fcntl(GETFL)") { it >= 0 }
-                        fcntl(client, F_SETFL, flag or O_NONBLOCK)
-                        val sk = selector.interest(client, POLLIN)
-                        sk.attachment = Client(client, selector)
-                    } else if (k.attachment is Client) {
-                        val client = k.attachment as Client
-                        
-                        if (k.readyOps and POLLIN != 0) {
-                            val rc = read(k.fd, client.buffer, 8192)
-                            
-                            if (rc == 0L) {
-                                client.close()
-                            } else if (rc > 0L) {
-                                client.index = 0
-                                client.size = rc
-                                selector.interest(k.fd, POLLOUT)
-                            } else if (rc == -1L) {
-                                @Suppress("DUPLICATE_LABEL_IN_WHEN")
-                                when (errno()) {
-                                    EAGAIN, EWOULDBLOCK -> {}
-                                    else -> {
-                                        client.close()
-                                    }
-                                }
-                            }
-                        } else if (k.readyOps and POLLOUT != 0) {
-                            val rc = write(k.fd, client.buffer + client.index, client.size)
-                            if (rc == -1L) {
-                                client.close()
-                            } else {
-                                client.index += rc
-                                client.size -= rc
-                                if (client.size == 0L) {
-                                    selector.interest(k.fd, POLLIN)
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                println("timeout")
-            }
-        }
+        selectLoop(selector)
     } finally {
         close(socket)
         selector.close()
