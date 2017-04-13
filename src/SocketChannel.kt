@@ -5,7 +5,7 @@ import epoll.*
 import kotlinx.cinterop.*
 
 class SocketChannel internal constructor(val fd: Int) : ReadableByteChannel, WritableByteChannel {
-    constructor() : this(socket(AF_INET, SOCK_STREAM, 0).ensureUnixCallResult { it >= 0 })
+    constructor() : this(socket(AF_INET, SOCK_STREAM, 0)) //.ensureUnixCallResult { it >= 0 })
 
     private var tmpBuffer: DirectByteBuffer? = null
     

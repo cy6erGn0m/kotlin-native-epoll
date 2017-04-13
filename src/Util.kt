@@ -17,7 +17,7 @@ fun errorMessage(errno: Int): String {
 }
 
 fun throwUnixError(name: String?): Nothing {
-        throw Error("UNIX call ${name ?: ""} failed: ${errorMessage(errno)}")
+        throw Error("UNIX call ${name ?: ""} failed: ${errorMessage(errno())}")
 }
 
 inline fun Int.ensureUnixCallResult(name: String? = null, predicate: (Int) -> Boolean): Int {

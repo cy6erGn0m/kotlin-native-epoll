@@ -1,2 +1,2 @@
-headers = errno.h stdio.h 
+headers = errno.h stdio.h string.h
 

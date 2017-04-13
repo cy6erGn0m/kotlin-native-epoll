@@ -26,6 +26,9 @@ konanInterop {
     epoll {
         defFile "epoll.def"
     }
+    netdb {
+        defFile "netdb.def"
+    }
 }
 
 konanArtifacts {
@@ -36,6 +39,7 @@ konanArtifacts {
         useInterop "errno"
         useInterop "time"
         useInterop "epoll"
+        useInterop "netdb"
     }
 }
 
