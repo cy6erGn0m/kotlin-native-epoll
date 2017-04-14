@@ -3,25 +3,24 @@ package kotlinx.native.nio
 import kotlinx.cinterop.*
 import epoll.*
 import errno.*
+import netinet.*
 
-class SocketChannel : SocketChannelBase() {
+class SocketChannel : SocketChannelBase {
+    constructor(fd: Int) : super(fd)
+    constructor() : super()
+
     fun connect(address: InetSocketAddress): Boolean {
-        val addr = address.address as Inet4Address
-        val v = htonl((addr.addr[0].toInt() shl 24) or (addr.addr[1].toInt() shl 16) or (addr.addr[2].toInt() shl 8) or (addr.addr[3].toInt()))
+        val server = address.toNative()
+        try {
+            val rc = connect(fd, server.reinterpret(), sockaddr_in.size.toInt())
 
-        return memScoped {
-            val server = alloc<sockaddr_in>() // TODO memset 0
-            server.sin_addr.s_addr = v
-            server.sin_family = AF_INET.toShort()
-            server.sin_port = htons(address.port.toShort())
-
-            val rc = connect(fd, server.ptr.reinterpret(), sockaddr_in.size.toInt())
-
-            if (rc == 0) return@memScoped true
+            if (rc == 0) return true
             val errno = errno()
-            if (errno == EINPROGRESS) return@memScoped false
+            if (errno == EINPROGRESS) return false
 
             throw Exception("connect() failed: ${errorMessage(errno)} ($errno)")
+        } finally {
+            nativeHeap.free(server)
         }
     }
 
