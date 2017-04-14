@@ -1,12 +1,16 @@
 package kotlinx.native.nio
 
 import errno.*
-import epoll.*
+import netinet.*
 import kotlinx.cinterop.*
 
 open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteChannel, WritableByteChannel {
-    constructor() : this(socket(AF_INET, SOCK_STREAM, 0)) //.ensureUnixCallResult { it >= 0 })
+    constructor() : this(socket(AF_INET, SOCK_STREAM, 0))
 
+    init {
+        fd.ensureUnixCallResult("socket()") { it >= 0 }
+    }
+    
     private var tmpReadBuffer: DirectByteBuffer? = null
     private var tmpWriteBuffer: DirectByteBuffer? = null
     
@@ -25,14 +29,14 @@ open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteCha
         val rc: Long
         if (buffer !is DirectByteBuffer) {
             val tmpBuffer = direct(size, false)
-            rc = read(fd, tmpBuffer.array, size.toLong())
+            rc = recv(fd, tmpBuffer.array, size.toLong(), MSG_NOSIGNAL)
             if (rc > 0L) {
                 tmpBuffer.position(0)
                 tmpBuffer.limit(rc.toInt())
                 buffer.put(tmpBuffer)
             }
         } else {
-            rc = read(fd, buffer.array, size.toLong())
+            rc = recv(fd, buffer.array, size.toLong(), MSG_NOSIGNAL)
             if (rc > 0L) {
                 buffer.position(buffer.position() + rc.toInt())
             }
@@ -63,9 +67,9 @@ open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteCha
             tmp.put(buffer)
             buffer.position(oldPosition)
 
-            rc = write(fd, tmp.array, size.toLong())
+            rc = send(fd, tmp.array, size.toLong(), MSG_NOSIGNAL)
         } else {
-            rc = write(fd, buffer.array, size.toLong())
+            rc = send(fd, buffer.array + buffer.position() + buffer.offset, size.toLong(), MSG_NOSIGNAL)
         }
 
         if (rc > 0L) {
