@@ -40,6 +40,11 @@ class Inet4Address(hostname: String?, val addr: ByteArray) : InetAddress(hostnam
         return sb.toString()
     }
 
+    fun toNative(out: CPointer<in_addr>) {
+        val v = htonl((addr[0].toInt() shl 24) or (addr[1].toInt() shl 16) or (addr[2].toInt() shl 8) or (addr[3].toInt()))
+        out.pointed.s_addr = v
+    }
+
     override fun equals(other: Any?): Boolean {
         if (other !is Inet4Address) return false
 
