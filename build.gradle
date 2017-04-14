@@ -29,6 +29,12 @@ konanInterop {
     netdb {
         defFile "netdb.def"
     }
+    netinet {
+        defFile "netinet.def"
+    }
+    stdlib {
+        defFile "stdlib.def"
+    }
 }
 
 konanArtifacts {
@@ -40,6 +46,8 @@ konanArtifacts {
         useInterop "time"
         useInterop "epoll"
         useInterop "netdb"
+        useInterop "netinet"
+        useInterop "stdlib"
     }
 }
 

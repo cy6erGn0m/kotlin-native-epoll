@@ -1,0 +1,2 @@
+headers = sys/types.h unistd.h netinet/in.h netinet/ip.h arpa/inet.h sys/socket.h fcntl.h
+

@@ -1,1 +1,1 @@
-headers = sys/epoll.h unistd.h sys/socket.h poll.h sys/socket.h arpa/inet.h sys/eventfd.h fcntl.h
+headers = sys/epoll.h poll.h sys/eventfd.h
