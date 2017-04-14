@@ -63,6 +63,19 @@ abstract class ByteBuffer(val capacity: Int) : Closeable {
     fun rewind() {
         position = 0
     }
+    
+    fun compact() {
+        val size = remaining()
+        if (size == 0) {
+            clear()
+        } else {
+            compactImpl(size)
+            position = size
+            limit = capacity
+        }
+    }
+    
+    protected abstract fun compactImpl(size: Int)
 
     fun remaining() = limit - position
     fun hasRemaining() = limit > position
@@ -106,6 +119,12 @@ internal class HeapByteBuffer(val array: ByteArray, val offset: Int, length: Int
         position += size
     }
 
+    override fun compactImpl(size: Int) {
+        for (i in 0..size - 1) {
+            array[i] = array[position + i]
+        }
+    }
+    
     override fun close() {
     }
 }
@@ -147,6 +166,12 @@ internal class DirectByteBuffer(val placement: NativeFreeablePlacement, val arra
         position += size
     }
 
+    override fun compactImpl(size: Int) {
+        for (i in 0..size - 1) {
+            array[i] = array[position + i]
+        }
+    }
+    
     override fun close() {
         placement.free(array)
     }
