@@ -41,7 +41,7 @@ abstract class ByteBuffer(val capacity: Int) : Closeable {
 
     fun position(n: Int): ByteBuffer {
         require(n >= 0) { "position shouldn't be negative: $n" }
-        require(n < limit) { "position is out of bounds: $n, limit = $limit" }
+        require(n <= limit) { "position is out of bounds: $n, limit = $limit" }
 
         position = n
         return this
