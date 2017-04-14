@@ -173,7 +173,6 @@ sealed class Behaviour(val selector: Selector) : Closeable {
             allKeys.add(sk)
             
             generateTo(connection.buffer)
-            connection.buffer.flip()
         }
         
         override fun loop(): Boolean {
@@ -184,13 +183,12 @@ sealed class Behaviour(val selector: Selector) : Closeable {
                 val s = c.s
                 
                 try {
+                    c.buffer.clear()
+                    c.buffer.position(rand() % (c.buffer.limit() - 1))
+                    
                     while (c.buffer.hasRemaining()) {
                         if (s.write(c.buffer) == 0) break
                     }
-                    
-                    c.buffer.compact()
-                    generateTo(c.buffer)
-                    c.buffer.flip()
                 } catch (t: Throwable) {
                     toBeCancelled.add(c)
                 }
