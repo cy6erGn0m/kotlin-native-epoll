@@ -7,7 +7,8 @@ import kotlinx.cinterop.*
 open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteChannel, WritableByteChannel {
     constructor() : this(socket(AF_INET, SOCK_STREAM, 0)) //.ensureUnixCallResult { it >= 0 })
 
-    private var tmpBuffer: DirectByteBuffer? = null
+    private var tmpReadBuffer: DirectByteBuffer? = null
+    private var tmpWriteBuffer: DirectByteBuffer? = null
     
     override val isOpen: Boolean get() = true   
 
@@ -23,7 +24,7 @@ open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteCha
 
         val rc: Long
         if (buffer !is DirectByteBuffer) {
-            val tmpBuffer = direct(size)
+            val tmpBuffer = direct(size, false)
             rc = read(fd, tmpBuffer.array, size.toLong())
             if (rc > 0L) {
                 tmpBuffer.position(0)
@@ -56,7 +57,7 @@ open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteCha
         var rc: Long
         
         if (buffer !is DirectByteBuffer) {
-            val tmp = direct(size)
+            val tmp = direct(size, true)
             val oldPosition = buffer.position()
             tmp.clear()
             tmp.put(buffer)
@@ -84,14 +85,17 @@ open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteCha
     
     override fun close() {
         close(fd)
-        tmpBuffer?.close()
-        tmpBuffer = null
+        tmpReadBuffer?.close()
+        tmpReadBuffer = null
+        tmpWriteBuffer?.close()
+        tmpWriteBuffer = null
     }
     
-    private fun direct(size: Int): DirectByteBuffer {
-        val buffer = tmpBuffer
+    private fun direct(size: Int, write: Boolean): DirectByteBuffer {
+        val buffer = if (write) tmpWriteBuffer else tmpReadBuffer
+
         val result = if (buffer == null || buffer.capacity() < size) {
-            (nativeHeap.allocDirectBuffer(size) as DirectByteBuffer).apply { tmpBuffer = this }
+            (nativeHeap.allocDirectBuffer(size) as DirectByteBuffer).apply { if (write) tmpWriteBuffer = this else tmpReadBuffer = this }
         } else buffer
 
         return result
