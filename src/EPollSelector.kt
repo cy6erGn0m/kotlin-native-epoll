@@ -11,7 +11,7 @@ class EPollSelector : Selector {
     private val buffer = nativeHeap.allocArray<epoll_event>(8192)
 
     private val keys = mutableMapOf<Int, SelectionKeyImpl>()
-    private val _selected = mutableSetOf<SelectionKeyImpl>()
+    private val _selected = SelectedSet()
 
     override val selected: Set<SelectionKey>
         get() = _selected
@@ -96,9 +96,49 @@ class EPollSelector : Selector {
         _selected.clear()
     }
     
+    private class SelectedSet : Set<SelectionKey> {
+        private val keys = ArrayList<SelectionKeyImpl>(1024)
+        
+        override val size: Int get() = keys.size
+        override fun isEmpty() = keys.isEmpty()
+        override fun contains(element: SelectionKey) = element is SelectionKeyImpl && element.selected
+        override fun iterator() = keys.iterator()
+        
+        override fun containsAll(elements: Collection<@UnsafeVariance SelectionKey>): Boolean {
+            return elements.all { it is SelectionKeyImpl && it.selected }
+        }
+        
+        internal fun add(e: SelectionKeyImpl): Boolean {
+            if (e.selected) return false
+                
+            keys.add(e)
+            e.selected = true
+            
+            return true
+        }
+        
+        internal fun remove(e: SelectionKeyImpl): Boolean {
+            if (!e.selected) return false
+                
+            keys.remove(e)
+            e.selected = false
+            
+            return true
+        }
+        
+        internal fun clear() {
+            for (k in keys) {
+                k.selected = false
+            }
+            keys.clear()
+        }
+    }
+    
     private class SelectionKeyImpl(override val fd: Int) : SelectionKey {
         override var interestOps = 0
         override var readyOps = 0
         override var attachment: Any? = null
+        
+        var selected = false
     }
 }

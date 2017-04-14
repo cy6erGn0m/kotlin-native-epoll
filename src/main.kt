@@ -259,7 +259,7 @@ sealed class Connector(val port: Int, val selector: Selector, val behaviour: Beh
         override fun setup() {
             s.configureBlocking(false)
             connected = s.connect(InetSocketAddress(port))
-            sk = selector.interest(s.fd, POLLIN)
+            sk = selector.interest(s.fd, POLLOUT)
         }
         
         override fun loop(): Boolean {
