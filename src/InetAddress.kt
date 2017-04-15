@@ -2,6 +2,7 @@ package kotlinx.native.nio
 
 import netdb.*
 import kotlinx.cinterop.*
+import errno.*
 
 class UnknownHostException(val host: String, val reason: String? = null) : Exception("host $host is unknown: $reason")
 
@@ -10,14 +11,20 @@ sealed class InetAddress(val hostname: String?) {
         fun getAllByName(name: String): Array<InetAddress> {
             if (name.isEmpty()) throw UnknownHostException(name)
 
-            if (name[0].let { it >= '0' && it <= '9' }) {
+            if (name[0] == ':') {
+                val addr6 = tryParseIPv6(name)
+                if (addr6 != null) return arrayOf(Inet6Address(name, addr6))
+            } else if (name[0] == '[' && name.last() == ']') {
+                val addr6 = tryParseIPv6(name.substring(1, name.length - 1))
+                if (addr6 != null) return arrayOf(Inet6Address(name, addr6))
+                
+                throw UnknownHostException(name)
+            } else {
                 val addr = tryParseIPv4(name)
                 if (addr != null) return arrayOf(Inet4Address(name, addr))
-            } else if (name[0] == ':') {
-                // TODO try parse IPv6
-            } else if (name[0] == '[' && name.last() == ']') {
-                // TODO force parse IPv6
-                throw UnknownHostException(name)
+                    
+                val addr6 = tryParseIPv6(name)
+                if (addr6 != null) return arrayOf(Inet6Address(name, addr6))
             }
 
             return resolve(name)
@@ -32,11 +39,13 @@ class Inet4Address(hostname: String?, val addr: ByteArray) : InetAddress(hostnam
 
     override fun toString(): String {
         val sb = StringBuilder((hostname?.length ?: 0) + 16)
-            if (hostname != null) {
-                sb.append(hostname)
-                sb.append(' ')
-            }
-            addr.joinTo(sb, separator = ".") { (it.toInt() and 0xff).toString() }
+        
+        if (hostname != null) {
+            sb.append(hostname)
+            sb.append(' ')
+        }
+        addr.joinTo(sb, separator = ".") { (it.toInt() and 0xff).toString() }
+            
         return sb.toString()
     }
 
@@ -58,6 +67,86 @@ class Inet6Address(hostname: String?, val addr: ByteArray) : InetAddress(hostnam
     init {
         require(addr.size == 16) { "requires IPv6 address" }
     }
+    
+    override fun toString(): String {
+        val sb = StringBuilder((hostname?.length ?: 0) + 40)
+        
+        if (hostname != null) {
+            sb.append(hostname)
+            sb.append(' ')
+        }
+        
+        val r = ShortArray(8)
+        var ri = 0
+        
+        var ai = 0
+        for (g in 0..7) {
+            val v = ((addr[ai].toInt() and 0xff shl 8) or (addr[ai + 1].toInt() and 0xff)).toShort()
+            ai += 2
+            
+            r[ri++] = v
+        }
+        
+        // TODO support ip4v to ipv6 mapping
+        
+        var longestIndex = -1
+        var longestStrideSize = 0
+        
+        var start = 0
+        var strideSize = 0
+        
+        for (i in 0..7) {
+            if (r[i] == 0.toShort()) {
+                if (strideSize == 0) start = i
+                strideSize ++
+            } else if (strideSize > 0) {
+                if (strideSize > longestStrideSize) {
+                    longestIndex = start
+                    longestStrideSize = strideSize
+                }
+                strideSize = 0
+            }
+        }
+        
+        if (strideSize > longestStrideSize) {
+            longestIndex = start
+            longestStrideSize = strideSize
+        }
+        
+        val longestStrideEnd = longestIndex + longestStrideSize
+        
+        for (i in 0..7) {
+            val inStride = i >= longestIndex && i < longestStrideEnd
+            
+            if (i == longestIndex || i == longestStrideEnd) sb.append(":")
+            else if (i != 0 && !inStride) sb.append(":")
+                
+            if (!inStride) {
+                sb.append((r[i].toInt() and 0xffff).toString(16))
+            }
+        }
+        
+        if (longestStrideEnd == 8) {
+            sb.append(":")
+        }
+        
+        return sb.toString()
+    }
+    
+    fun toNative(out: CPointer<in6_addr>) {
+        val p = out.pointed.__in6_u.__u6_addr8
+        for (i in 0..15) {
+            p[i] = addr[i]
+        }
+    }
+    
+    override fun equals(other: Any?): Boolean {
+        if (other !is Inet6Address) return false
+
+        return addr.contentEquals(other.addr)
+    }
+
+    override fun hashCode(): Int = addr.contentHashCode()
 }
 
 private fun tryParseIPv4(s: String): ByteArray? {
@@ -87,6 +176,68 @@ private fun tryParseIPv4(s: String): ByteArray? {
 
     return result
 }
+
+fun tryParseIPv6(s: String): ByteArray? {
+    if (s.length < 2 || s.length > 39) return null
+        
+    val result = ByteArray(16)
+    var ridx = 0
+    
+    var strideStart = -1
+    var i = 0
+    
+    if (s[0] == ':') {
+        if (s[1] != ':') return null
+        i = 2
+        strideStart = 0
+    }
+    
+    while (i < s.length) {
+        val ch = s[i++]
+        val digit = hexToIntOrNeg1(ch)
+        
+        if (ch == ':') { // start zero stride
+            if (strideStart != -1) return null
+            strideStart = ridx
+        } else if (digit != -1) {
+            var n = digit
+            while (i < s.length) {
+                val ch2 = s[i++]
+                if (ch2 == ':') break
+                
+                val dn = hexToIntOrNeg1(ch2)
+                if (dn == -1) return null
+                
+                n = (n shl 4) or dn
+                
+                if (n > 0xffff) return null
+            }
+            
+            result[ridx++] = (n shr 8).toByte()
+            result[ridx++] = (n and 0xff).toByte()
+        } else return null
+    }
+    
+    if (ridx < 16 && strideStart == -1) return null
+    
+    if (strideStart != -1) {
+        val shift = 16 - ridx
+        for (j in 0..shift - 1) {
+            result[ridx + j] = result[strideStart + j]
+            result[strideStart + j] = 0.toByte()
+        }
+    }
+    
+    return result
+}
+
+@Suppress("NOTHING_TO_INLINE")
+private inline fun hexToIntOrNeg1(ch: Char) = when {
+            ch >= '0' && ch <= '9' -> ch.toInt() - 0x30
+            ch >= 'a' && ch <= 'f' -> ch.toInt() - 'a'.toInt() + 0xa
+            ch >= 'A' && ch <= 'F' -> ch.toInt() - 'A'.toInt() + 0xa
+            else -> -1
+        }
 
 private fun resolve(host: String): Array<InetAddress> {
     return memScoped {
@@ -120,7 +271,19 @@ private fun resolve(host: String): Array<InetAddress> {
                             results.add(Inet4Address(name, bytes))
                         }
                     }
-                    // TODO support IPv6
+                    AF_INET6 -> {
+                        val name = addr.ai_canonname?.toKString() ?: host
+                        var saddr = addr.ai_addr?.reinterpret<sockaddr_in6>()?.pointed?.sin6_addr?.__in6_u?.__u6_addr8
+                        
+                        if (saddr != null) {
+                            val b = ByteArray(16)
+                            for (i in 0..15) {
+                                b[i] = saddr[i]
+                            }
+                            
+                            results.add(Inet6Address(name, b))
+                        }
+                    }
                 }
                         
                 ptr = addr.ai_next
