@@ -4,23 +4,27 @@ import errno.*
 import netinet.*
 import kotlinx.cinterop.*
 
-open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteChannel, WritableByteChannel {
-    constructor() : this(socket(AF_INET, SOCK_STREAM, 0))
-
-    init {
-        fd.ensureUnixCallResult("socket()") { it >= 0 }
+open class SocketChannelBase internal constructor() : DescriptorHolder(), ReadableByteChannel, WritableByteChannel {
+    internal constructor(fd: Int) : this() {
+        require(fd >= 0)
+        fd { fd }
     }
-    
+
+    private var blocking = true
     private var tmpReadBuffer: DirectByteBuffer? = null
     private var tmpWriteBuffer: DirectByteBuffer? = null
     
     override val isOpen: Boolean get() = true   
 
     fun configureBlocking(blocking: Boolean) {
-        var flags = fcntl(fd, F_GETFL, 0).ensureUnixCallResult("fcntl(F_GETFL)") { it >= 0 }
-        flags = if (blocking) (flags and O_NONBLOCK.inv()) else (flags or O_NONBLOCK)
+        if (hasDescriptor) {
+            var flags = fcntl(fd, F_GETFL, 0).ensureUnixCallResult("fcntl(F_GETFL)") { it >= 0 }
+            flags = if (blocking) (flags and O_NONBLOCK.inv()) else (flags or O_NONBLOCK)
 
-        fcntl(fd, F_SETFL, flags).ensureUnixCallResult("fcntl(F_SETFL)") { it == 0 }
+            fcntl(fd, F_SETFL, flags).ensureUnixCallResult("fcntl(F_SETFL)") { it == 0 }
+        } else {
+            this.blocking = blocking
+        }
     }
 
     override fun read(buffer: ByteBuffer): Int {
@@ -88,11 +92,16 @@ open class SocketChannelBase internal constructor(val fd: Int) : ReadableByteCha
     }
     
     override fun close() {
-        close(fd)
+        super.close()
         tmpReadBuffer?.close()
         tmpReadBuffer = null
         tmpWriteBuffer?.close()
         tmpWriteBuffer = null
+    }
+    
+    protected fun create(family: sa_family_t) {
+        fd { socket(family.toInt(), SOCK_STREAM, 0).ensureUnixCallResult("socket()") { it >= 0 } }
+        configureBlocking(blocking)
     }
     
     private fun direct(size: Int, write: Boolean): DirectByteBuffer {

@@ -10,9 +10,16 @@ class SocketChannel : SocketChannelBase {
     constructor() : super()
 
     fun connect(address: InetSocketAddress): Boolean {
+        val size = when (address.address) {
+            is Inet4Address -> sockaddr_in.size.toInt()
+            is Inet6Address -> sockaddr_in6.size.toInt()
+            else -> throw IllegalStateException("Only Inet4Address and Inet6Address are supported")
+        }
         val server = address.toNative()
+        create(server.reinterpret<sockaddr_in>().pointed.sin_family)
+
         try {
-            val rc = connect(fd, server.reinterpret(), sockaddr_in.size.toInt())
+            val rc = connect(fd, server.reinterpret(), size)
 
             if (rc == 0) return true
             val errno = errno()

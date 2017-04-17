@@ -13,18 +13,18 @@ sealed class InetAddress(val hostname: String?) {
 
             if (name[0] == ':') {
                 val addr6 = tryParseIPv6(name)
-                if (addr6 != null) return arrayOf(Inet6Address(name, addr6))
+                if (addr6 != null) return arrayOf(Inet6Address(null, addr6))
             } else if (name[0] == '[' && name.last() == ']') {
                 val addr6 = tryParseIPv6(name.substring(1, name.length - 1))
-                if (addr6 != null) return arrayOf(Inet6Address(name, addr6))
+                if (addr6 != null) return arrayOf(Inet6Address(null, addr6))
                 
                 throw UnknownHostException(name)
             } else {
                 val addr = tryParseIPv4(name)
-                if (addr != null) return arrayOf(Inet4Address(name, addr))
+                if (addr != null) return arrayOf(Inet4Address(null, addr))
                     
                 val addr6 = tryParseIPv6(name)
-                if (addr6 != null) return arrayOf(Inet6Address(name, addr6))
+                if (addr6 != null) return arrayOf(Inet6Address(null, addr6))
             }
 
             return resolve(name)
@@ -50,7 +50,12 @@ class Inet4Address(hostname: String?, val addr: ByteArray) : InetAddress(hostnam
     }
 
     fun toNative(out: CPointer<in_addr>) {
-        val v = htonl((addr[0].toInt() shl 24) or (addr[1].toInt() shl 16) or (addr[2].toInt() shl 8) or (addr[3].toInt()))
+        val v = htonl(
+            (addr[0].toInt() and 0xff shl 24) or
+            (addr[1].toInt() and 0xff shl 16) or
+            (addr[2].toInt() and 0xff shl 8) or
+            (addr[3].toInt() and 0xff))
+
         out.pointed.s_addr = v
     }
 
